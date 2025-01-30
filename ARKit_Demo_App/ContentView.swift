@@ -76,6 +76,24 @@ class ARViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         }
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         arView.addGestureRecognizer(tapGesture)
+        
+        let apiURL = "art.scnassets/teapotcopy.scn"
+        
+        fetchModelURL(from: apiURL) { modelURL in
+               if let modelURL = modelURL {
+                   self.downloadSCNFile(from: modelURL) { localURL in
+                       if let localURL = localURL {
+                           DispatchQueue.main.async {
+                               self.loadDownloadedModel(from: localURL)
+                           }
+                       } else {
+                           print("Failed to download the model")
+                       }
+                   }
+               } else {
+                   print("Failed to fetch model URL")
+               }
+           }
     }
     
     private func startARSession() {
@@ -137,7 +155,6 @@ class ARViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
    
-    
     func resetScene() {
         arView.session.pause()
         arView.scene.rootNode.enumerateChildNodes { (node, _) in
@@ -158,6 +175,87 @@ class ARViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         planeNode.position = SCNVector3(planeAnchor.center.x, 0, planeAnchor.center.z)
         planeNode.eulerAngles.x = -.pi / 2
         node.addChildNode(planeNode)
+    }
+    
+    func fetchModelURL(from apiURL: String, completion: @escaping (String?) -> Void) {
+        guard let url = URL(string: apiURL) else {
+            print("Invalid API URL")
+            completion(nil)
+            return
+        }
+        
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            guard let data = data, error == nil else {
+                print("API Request Failed:", error?.localizedDescription ?? "Unknown error")
+                completion(nil)
+                return
+            }
+            
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                   let modelURL = json["modelURL"] as? String {
+                    completion(modelURL)
+                } else {
+                    print("Invalid JSON format")
+                    completion(nil)
+                }
+            } catch {
+                print("JSON Parsing Error:", error.localizedDescription)
+                completion(nil)
+            }
+        }
+        
+        task.resume()
+    }
+    
+    func downloadSCNFile(from urlString: String, completion: @escaping (URL?) -> Void) {
+        guard let url = URL(string: urlString) else {
+            print("Invalid model URL")
+            completion(nil)
+            return
+        }
+        
+        let task = URLSession.shared.downloadTask(with: url) { tempURL, response, error in
+            guard let tempURL = tempURL, error == nil else {
+                print("Download Failed:", error?.localizedDescription ?? "Unknown error")
+                completion(nil)
+                return
+            }
+            
+            let fileName = url.lastPathComponent
+            let fileManager = FileManager.default
+            let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let destinationURL = documentsDirectory.appendingPathComponent(fileName)
+            
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try? fileManager.removeItem(at: destinationURL)
+            }
+            
+            do {
+                try fileManager.moveItem(at: tempURL, to: destinationURL)
+                print("File saved to:", destinationURL)
+                completion(destinationURL)
+            } catch {
+                print("File Move Error:", error.localizedDescription)
+                completion(nil)
+            }
+        }
+        
+        task.resume()
+    }
+    
+    func loadDownloadedModel(from fileURL: URL) {
+        do {
+            let scene = try SCNScene(url: fileURL, options: nil)
+            if let modelNode = scene.rootNode.childNodes.first {
+                modelNode.scale = SCNVector3(0.002, 0.002, 0.002) // Adjust scale
+                arView.scene.rootNode.addChildNode(modelNode)
+            } else {
+                print("Model node not found in SCN file")
+            }
+        } catch {
+            print("Failed to load SCN file:", error.localizedDescription)
+        }
     }
 }
 
